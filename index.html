@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>极简云阅 - 我的私人书架</title>
+    <script src="https://unpkg.com/dexie/dist/dexie.js"></script>
+    <style>
+        :root { --bg: #fdf6e3; --text: #586e75; --panel: #eee8d5; }
+        body.dark { --bg: #073642; --text: #93a1a1; --panel: #002b36; }
+        
+        body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; display: flex; }
+        
+        /* 侧边栏 */
+        #sidebar { 
+            width: 250px; height: 100vh; background: var(--panel); 
+            overflow-y: auto; position: fixed; left: -250px; transition: 0.3s; z-index: 1000;
+            padding: 20px; box-sizing: border-box;
+        }
+        #sidebar.open { left: 0; }
+        
+        /* 主体区域 */
+        #main { flex: 1; padding: 20px; max-width: 800px; margin: 0 auto; transition: 0.3s; }
+        .controls { position: fixed; bottom: 20px; right: 20px; display: flex; gap: 10px; }
+        
+        .btn { 
+            background: var(--text); color: var(--bg); border: none; 
+            padding: 10px 15px; border-radius: 50px; cursor: pointer; opacity: 0.8;
+        }
+        
+        #content { line-height: 1.8; font-size: 20px; white-space: pre-wrap; margin-top: 40px; }
+        .chapter-item { cursor: pointer; padding: 5px 0; border-bottom: 1px solid #ccc; font-size: 14px; }
+        .chapter-item:hover { color: #268bd2; }
+    </style>
+</head>
+<body>
+
+<div id="sidebar">
+    <h3>章节目录</h3>
+    <div id="catalog">导入小说后自动生成</div>
+</div>
+
+<div id="main">
+    <div id="content">请点击右下角“导入”开始阅读...</div>
+    
+    <div class="controls">
+        <button class="btn" onclick="document.getElementById('fileInput').click()">导入 TXT</button>
+        <button class="btn" onclick="toggleSidebar()">目录</button>
+        <button class="btn" onclick="document.body.classList.toggle('dark')">昼夜</button>
+    </div>
+    <input type="file" id="fileInput" hidden accept=".txt">
+</div>
+
+<script>
+    // 初始化数据库
+    const db = new Dexie("NovelDB");
+    db.version(1).stores({ books: "id, name, content" });
+
+    const fileInput = document.getElementById('fileInput');
+    const contentBox = document.getElementById('content');
+    const catalogBox = document.getElementById('catalog');
+
+    // 页面加载时自动读取上次保存的内容
+    window.onload = async () => {
+        const lastBook = await db.books.get(1);
+        if (lastBook) renderBook(lastBook.content);
+    };
+
+    fileInput.onchange = async (e) => {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+        reader.readAsText(file, 'UTF-8');
+        reader.onload = async (event) => {
+            const text = event.target.result;
+            await db.books.put({ id: 1, name: file.name, content: text });
+            renderBook(text);
+        };
+    };
+
+    function renderBook(text) {
+        contentBox.innerText = text;
+        generateCatalog(text);
+    }
+
+    function generateCatalog(text) {
+        catalogBox.innerHTML = '';
+        const reg = /第[一二三四五六七八九十百千万零\d]+章[^\n]*/g;
+        let match;
+        while ((match = reg.exec(text)) !== null) {
+            const div = document.createElement('div');
+            div.className = 'chapter-item';
+            div.innerText = match[0];
+            const offset = match.index;
+            div.onclick = () => {
+                window.scrollTo(0, contentBox.offsetTop + getOffsetTopInPre(text, offset));
+                toggleSidebar();
+            };
+            catalogBox.appendChild(div);
+        }
+    }
+
+    function getOffsetTopInPre(text, charIndex) {
+        // 粗略定位，更精准需要计算行高，这里简化处理
+        const lines = text.substring(0, charIndex).split('\n').length;
+        return lines * 36; // 36 是大约的行高
+    }
+
+    function toggleSidebar() {
+        document.getElementById('sidebar').classList.toggle('open');
+    }
+</script>
+</body>
+</html>
