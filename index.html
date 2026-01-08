@@ -3,111 +3,168 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>极简云阅 - 我的私人书架</title>
-    <script src="https://unpkg.com/dexie/dist/dexie.js"></script>
+    <title>GitHub 云端阅览室</title>
     <style>
-        :root { --bg: #fdf6e3; --text: #586e75; --panel: #eee8d5; }
-        body.dark { --bg: #073642; --text: #93a1a1; --panel: #002b36; }
+        :root { --bg: #f4f1ea; --text: #333; --sidebar-bg: #e8e4d8; }
+        body { margin: 0; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; display: flex; background: var(--bg); color: var(--text); }
         
-        body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; display: flex; }
-        
-        /* 侧边栏 */
+        /* 侧边栏：书架与目录 */
         #sidebar { 
-            width: 250px; height: 100vh; background: var(--panel); 
-            overflow-y: auto; position: fixed; left: -250px; transition: 0.3s; z-index: 1000;
-            padding: 20px; box-sizing: border-box;
+            width: 280px; height: 100vh; background: var(--sidebar-bg); 
+            border-right: 1px solid #d1cdb7; display: flex; flex-direction: column;
         }
-        #sidebar.open { left: 0; }
+        .tabs { display: flex; border-bottom: 1px solid #d1cdb7; }
+        .tab { flex: 1; padding: 15px; text-align: center; cursor: pointer; font-weight: bold; }
+        .tab.active { background: var(--bg); border-bottom: 2px solid #8b572a; }
         
-        /* 主体区域 */
-        #main { flex: 1; padding: 20px; max-width: 800px; margin: 0 auto; transition: 0.3s; }
-        .controls { position: fixed; bottom: 20px; right: 20px; display: flex; gap: 10px; }
-        
-        .btn { 
-            background: var(--text); color: var(--bg); border: none; 
-            padding: 10px 15px; border-radius: 50px; cursor: pointer; opacity: 0.8;
+        #list-container { flex: 1; overflow-y: auto; padding: 10px; }
+        .list-item { 
+            padding: 12px; margin-bottom: 5px; background: rgba(255,255,255,0.5); 
+            border-radius: 4px; cursor: pointer; font-size: 14px; transition: 0.2s;
+        }
+        .list-item:hover { background: #fff; transform: translateX(5px); }
+
+        /* 主内容区 */
+        #main { flex: 1; height: 100vh; overflow-y: auto; position: relative; scroll-behavior: smooth; }
+        #reader-content { 
+            max-width: 700px; margin: 0 auto; padding: 50px 20px; 
+            line-height: 2; font-size: 18px; white-space: pre-wrap; 
         }
         
-        #content { line-height: 1.8; font-size: 20px; white-space: pre-wrap; margin-top: 40px; }
-        .chapter-item { cursor: pointer; padding: 5px 0; border-bottom: 1px solid #ccc; font-size: 14px; }
-        .chapter-item:hover { color: #268bd2; }
+        /* 浮动控制面板 */
+        .floating-tools { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 10px; }
+        .tool-btn { 
+            width: 45px; height: 45px; border-radius: 50%; background: #8b572a; color: white; 
+            border: none; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1); font-size: 12px;
+        }
+
+        h2 { border-bottom: 2px solid #8b572a; padding-bottom: 10px; margin-top: 40px; }
     </style>
 </head>
 <body>
 
-<div id="sidebar">
-    <h3>章节目录</h3>
-    <div id="catalog">导入小说后自动生成</div>
-</div>
-
-<div id="main">
-    <div id="content">请点击右下角“导入”开始阅读...</div>
-    
-    <div class="controls">
-        <button class="btn" onclick="document.getElementById('fileInput').click()">导入 TXT</button>
-        <button class="btn" onclick="toggleSidebar()">目录</button>
-        <button class="btn" onclick="document.body.classList.toggle('dark')">昼夜</button>
+<aside id="sidebar">
+    <div class="tabs">
+        <div class="tab active" onclick="showTab('bookshelf')">在线书架</div>
+        <div class="tab" onclick="showTab('catalog')">当前目录</div>
     </div>
-    <input type="file" id="fileInput" hidden accept=".txt">
+    <div id="list-container">
+        正在连接 GitHub 书库...
+    </div>
+</aside>
+
+<main id="main">
+    <div id="reader-content">
+        <h1>欢迎来到云端阅览室</h1>
+        <p>请在左侧书架选择一本小说开始阅读。</p>
+        <p>提示：你可以直接在 GitHub 仓库的 books/ 文件夹下添加 TXT 文件，并在 booklist.json 中注册它们。</p>
+    </div>
+</main>
+
+<div class="floating-tools">
+    <button class="tool-btn" onclick="changeSize(2)">A+</button>
+    <button class="tool-btn" onclick="changeSize(-2)">A-</button>
+    <button class="tool-btn" onclick="window.scrollTo(0,0)">TOP</button>
 </div>
 
 <script>
-    // 初始化数据库
-    const db = new Dexie("NovelDB");
-    db.version(1).stores({ books: "id, name, content" });
+    let currentTab = 'bookshelf';
+    let allBooks = [];
+    let chapters = [];
 
-    const fileInput = document.getElementById('fileInput');
-    const contentBox = document.getElementById('content');
-    const catalogBox = document.getElementById('catalog');
-
-    // 页面加载时自动读取上次保存的内容
-    window.onload = async () => {
-        const lastBook = await db.books.get(1);
-        if (lastBook) renderBook(lastBook.content);
-    };
-
-    fileInput.onchange = async (e) => {
-        const file = e.target.files[0];
-        const reader = new FileReader();
-        reader.readAsText(file, 'UTF-8');
-        reader.onload = async (event) => {
-            const text = event.target.result;
-            await db.books.put({ id: 1, name: file.name, content: text });
-            renderBook(text);
-        };
-    };
-
-    function renderBook(text) {
-        contentBox.innerText = text;
-        generateCatalog(text);
-    }
-
-    function generateCatalog(text) {
-        catalogBox.innerHTML = '';
-        const reg = /第[一二三四五六七八九十百千万零\d]+章[^\n]*/g;
-        let match;
-        while ((match = reg.exec(text)) !== null) {
-            const div = document.createElement('div');
-            div.className = 'chapter-item';
-            div.innerText = match[0];
-            const offset = match.index;
-            div.onclick = () => {
-                window.scrollTo(0, contentBox.offsetTop + getOffsetTopInPre(text, offset));
-                toggleSidebar();
-            };
-            catalogBox.appendChild(div);
+    // 初始化：从 GitHub 读取书单
+    async function init() {
+        try {
+            // 默认抓取同目录下的 booklist.json
+            const response = await fetch('booklist.json');
+            allBooks = await response.json();
+            renderBookshelf();
+        } catch (err) {
+            document.getElementById('list-container').innerText = "书单加载失败，请确保 booklist.json 存在且格式正确。";
         }
     }
 
-    function getOffsetTopInPre(text, charIndex) {
-        // 粗略定位，更精准需要计算行高，这里简化处理
-        const lines = text.substring(0, charIndex).split('\n').length;
-        return lines * 36; // 36 是大约的行高
+    // 渲染书架
+    function renderBookshelf() {
+        const container = document.getElementById('list-container');
+        container.innerHTML = '';
+        allBooks.forEach(book => {
+            const div = document.createElement('div');
+            div.className = 'list-item';
+            div.innerText = book.title;
+            div.onclick = () => loadBook(book.path);
+            container.appendChild(div);
+        });
     }
 
-    function toggleSidebar() {
-        document.getElementById('sidebar').classList.toggle('open');
+    // 从服务器加载 TXT 文件
+    async function loadBook(path) {
+        const contentBox = document.getElementById('reader-content');
+        contentBox.innerText = "正在拉取云端文本...";
+        
+        try {
+            const response = await fetch(path);
+            const text = await response.text();
+            contentBox.innerText = text;
+            
+            // 解析章节
+            parseChapters(text);
+            showTab('catalog'); // 自动切换到目录标签
+            document.getElementById('main').scrollTop = 0;
+        } catch (err) {
+            contentBox.innerText = "读取文件失败：" + path;
+        }
     }
+
+    // 正则解析目录
+    function parseChapters(text) {
+        chapters = [];
+        const reg = /第[一二三四五六七八九十百千万零\d]+[章节回][^\n]*/g;
+        let match;
+        while ((match = reg.exec(text)) !== null) {
+            chapters.push({ title: match[0], pos: match.index });
+        }
+        if (currentTab === 'catalog') renderCatalog();
+    }
+
+    // 渲染目录列表
+    function renderCatalog() {
+        const container = document.getElementById('list-container');
+        container.innerHTML = chapters.length ? '' : '未找到明显章节标记';
+        chapters.forEach(ch => {
+            const div = document.createElement('div');
+            div.className = 'list-item';
+            div.innerText = ch.title;
+            div.onclick = () => {
+                // 简单的定位逻辑：寻找包含该标题的文本节点
+                const mainArea = document.getElementById('main');
+                const content = document.getElementById('reader-content').innerText;
+                // 注意：这里由于是 pre-wrap，直接定位字符位置比较复杂，
+                // 简单方案是直接搜索页面元素，这里我们采用跳转到包含文字的地方
+                window.find(ch.title); 
+            };
+            container.appendChild(div);
+        });
+    }
+
+    // 标签切换
+    function showTab(tab) {
+        currentTab = tab;
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        event.target.classList.add('active');
+        if (tab === 'bookshelf') renderBookshelf();
+        else renderCatalog();
+    }
+
+    // 字体调节
+    let fontSize = 18;
+    function changeSize(n) {
+        fontSize += n;
+        document.getElementById('reader-content').style.fontSize = fontSize + 'px';
+    }
+
+    init();
 </script>
+
 </body>
 </html>
